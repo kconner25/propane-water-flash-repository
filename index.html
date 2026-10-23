@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Propane + Water: Flash, Then Stripping</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ================================================================
+     SIDEBAR: every user input lives here, in three groups.
+     Input ids match the solver.py argument names on purpose, so the
+     wiring in Step 3 is a straight read-by-id with no renaming.
+     ================================================================ -->
+<aside class="sidebar">
+
+  <div class="side-group">
+    <h2>The feed</h2>
+
+    <label for="feed_flow">Total feed flow [mol/h]</label>
+    <input type="number" id="feed_flow" value="100" min="0" step="any">
+
+    <label for="z_propane">Propane in feed [mole fraction]</label>
+    <input type="number" id="z_propane" value="0.30" min="0" max="1" step="0.01">
+  </div>
+
+  <div class="side-group">
+    <h2>The flash</h2>
+
+    <label for="flash_T_C">Flash temperature [°C]</label>
+    <input type="number" id="flash_T_C" value="25" step="any">
+
+    <label for="flash_P_bar">Flash pressure [bar]</label>
+    <input type="number" id="flash_P_bar" value="1.0" min="0" step="any">
+
+    <label for="model">Equilibrium model</label>
+    <select id="model">
+      <option value="ideal" selected>Ideal — Raoult + Antoine (v1)</option>
+      <option value="nonideal" disabled>Non-ideal / 3-phase — coming later</option>
+    </select>
+  </div>
+
+  <div class="side-group">
+    <h2>The stripper</h2>
+    <p class="side-note">Feed to this column is the flash liquid.
+      It is calculated, never typed in.</p>
+
+    <label for="n_stages">Number of stages N</label>
+    <input type="number" id="n_stages" value="5" min="1" max="30" step="1">
+
+    <label for="gas_flow">Stripping gas in [mol/h]</label>
+    <input type="number" id="gas_flow" value="50" min="0" step="any">
+
+    <label for="stripper_T_C">Column temperature [°C]</label>
+    <input type="number" id="stripper_T_C" value="25" step="any">
+
+    <label for="stripper_P_bar">Column pressure [bar]</label>
+    <input type="number" id="stripper_P_bar" value="1.0" min="0" step="any">
+
+    <label for="spec_ppm">Target: propane in stripped water [ppm]</label>
+    <input type="number" id="spec_ppm" value="10" min="0" step="any">
+  </div>
+
+  <div class="side-footer">
+    <span class="badge" id="py-status">Python: loading…</span>
+    <p class="side-note">Teaching model: Raoult's law flash, then a
+      constant-K stripper checked against Kremser. Propane + water is
+      non-ideal, so treat results as the calculation method,
+      not a design prediction.</p>
+  </div>
+
+</aside>
+
+<!-- ================================================================
+     MAIN COLUMN
+     ================================================================ -->
+<main class="main">
+
+  <h1>Propane + water: flash, then stripping</h1>
+  <p class="intro">A propane + water feed enters a flash vessel. The vapour
+    leaves the top; the liquid leaves the bottom and becomes the feed to a
+    stripping column, where inert gas in at the bottom removes the remaining
+    propane. Change any input in the sidebar and every number below
+    updates.</p>
+
+  <!-- Live flowsheet strip: values are placeholders ("--") until Step 3.
+       The liquid box carries two labels on purpose: it is both the
+       flash outlet and the stripper feed. One stream, not two inputs. -->
+  <section class="flowsheet" aria-label="Flowsheet">
+    <div class="unit">
+      <span class="unit-name">Feed</span>
+      <span class="unit-value" id="stream-feed">-- mol/h</span>
+    </div>
+    <span class="arrow">→</span>
+    <div class="unit vessel">
+      <span class="unit-name">Flash vessel</span>
+      <span class="unit-value">vapour out ↑ · liquid out ↓</span>
+    </div>
+    <span class="arrow">→</span>
+    <div class="unit">
+      <span class="unit-name">Flash vapour</span>
+      <span class="unit-value" id="stream-vapour">-- mol/h</span>
+    </div>
+    <span class="arrow">→</span>
+    <div class="unit highlight">
+      <span class="unit-name">Flash liquid = stripper feed</span>
+      <span class="unit-value" id="stream-liquid">-- mol/h</span>
+    </div>
+    <span class="arrow">→</span>
+    <div class="unit vessel">
+      <span class="unit-name">Stripping column</span>
+      <span class="unit-value">gas in at bottom</span>
+    </div>
+    <span class="arrow">→</span>
+    <div class="unit">
+      <span class="unit-name">Stripped water</span>
+      <span class="unit-value" id="stream-stripped">-- ppm propane</span>
+    </div>
+  </section>
+
+  <!-- The 4 stat cards. Step 3 fills the values by id. -->
+  <section class="cards">
+    <div class="card">
+      <span class="card-label">Vapour fraction β</span>
+      <span class="card-value" id="card-beta">—</span>
+      <span class="card-sub">fraction of feed leaving as flash vapour
+        · <a href="#python" data-goto-tab="python" data-goto-section="3">See the code →</a></span>
+    </div>
+    <div class="card">
+      <span class="card-label">Propane to flash vapour</span>
+      <span class="card-value" id="card-split">—</span>
+      <span class="card-sub">% of feed propane leaving in the flash vapour</span>
+    </div>
+    <div class="card">
+      <span class="card-label">Propane in stripped water</span>
+      <span class="card-value" id="card-ppm">—</span>
+      <span class="card-sub"><span class="pill" id="card-spec-pill">spec: —</span>
+        · <a href="#python" data-goto-tab="python" data-goto-section="5">See the code →</a></span>
+    </div>
+    <div class="card">
+      <span class="card-label">Overall propane removal</span>
+      <span class="card-value" id="card-removal">—</span>
+      <span class="card-sub">feed propane not present in the stripped water, %</span>
+    </div>
+  </section>
+
+  <!-- Solver warnings (S <= 1, Antoine range, near-critical) land here. -->
+  <div class="warnings" id="warnings" hidden></div>
+
+  <!-- Tab bar: App | Theory | Python, as on the reference site. -->
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="app" role="tab">App</button>
+    <button class="tab" data-tab="theory" role="tab">Theory</button>
+    <button class="tab" data-tab="python" role="tab">Python — step by step</button>
+  </nav>
+
+  <!-- ======== TAB: APP ======== -->
+  <section class="tab-panel" id="panel-app">
+
+    <!-- Step-through controls. Disabled placeholders in the skeleton;
+         Step 4 makes them walk the column profile stage by stage. -->
+    <div class="transport">
+      <button class="tbtn" id="btn-reset" disabled title="Back to stage 0">⏮</button>
+      <button class="tbtn" id="btn-back" disabled title="Back one stage">◀ Back</button>
+      <button class="tbtn primary" id="btn-step" disabled>Step stage ▶</button>
+      <button class="tbtn" id="btn-play" disabled>Play</button>
+      <label class="slider-label" for="stage-slider">Stage <span id="stage-now">0</span> of <span id="stage-max">—</span></label>
+      <input type="range" id="stage-slider" min="0" max="5" value="0" disabled>
+    </div>
+    <p class="caption" id="stage-caption">Waiting for the solver…</p>
+
+    <h2>Stream summary</h2>
+    <table class="streams">
+      <thead>
+        <tr><th>Stream</th><th>Flow [mol/h]</th><th>x propane</th><th>x water</th></tr>
+      </thead>
+      <tbody>
+        <tr id="row-feed"><td>1 · Feed</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr id="row-vapour"><td>2 · Flash vapour</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr id="row-liquid"><td>3 · Flash liquid → stripper feed</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr id="row-gas-in"><td>4 · Stripping gas in (pure inert)</td><td>—</td><td>0</td><td>0</td></tr>
+        <tr id="row-top-gas"><td>5 · Top gas from stripper</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr id="row-stripped"><td>6 · Stripped water</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr id="row-balance" class="balance-row"><td>Balance check (in − out)</td><td>—</td><td colspan="2">must be ~0</td></tr>
+      </tbody>
+    </table>
+    <p class="caption">Column flows use the model's constant-molar-overflow
+      assumption: liquid and gas molar flows are held constant through the
+      stripper (the standard Kremser assumption). Gas-stream compositions
+      are propane only — the rest of the gas is inert, and water transfer
+      to the gas is neglected in this model.</p>
+
+    <h2>Stage profile</h2>
+    <div class="chart" id="chart-stage-profile">
+      <p class="placeholder-note">Chart loads with the solver.</p>
+    </div>
+
+    <h2>Stepping diagram</h2>
+    <div class="chart" id="chart-stepping">
+      <p class="placeholder-note">Chart loads with the solver.</p>
+    </div>
+
+  </section>
+
+  <!-- ======== TAB: THEORY ======== -->
+  <section class="tab-panel" id="panel-theory" hidden>
+
+    <h2>The sequence</h2>
+    <p>One feed, two units, no choices in between: the flash splits the feed
+      into vapour V and liquid L, and L — the whole of it, at whatever flow
+      and composition the flash gives — is the stripper feed. That is why
+      the sidebar has no stripper-feed inputs.</p>
+    <p class="eq">F = V + L &nbsp;&nbsp;·&nbsp;&nbsp; F·z<sub>i</sub> = V·y<sub>i</sub> + L·x<sub>i</sub></p>
+
+    <h2>The flash</h2>
+    <p>At the flash temperature and pressure, each component splits between
+      the phases according to its K-value. Raoult's law gets K from the
+      pure-component vapour pressure, which the Antoine equation supplies:</p>
+    <p class="eq">K<sub>i</sub> = P<sup>sat</sup><sub>i</sub>(T) / P
+      &nbsp;&nbsp;·&nbsp;&nbsp; log<sub>10</sub> P<sup>sat</sup> = A − B / (T + C)
+      &nbsp;&nbsp;·&nbsp;&nbsp; y<sub>i</sub> = K<sub>i</sub>·x<sub>i</sub></p>
+    <p>The one unknown is β = V/F, the vapour fraction. Requiring both
+      phase compositions to sum to 1 gives the Rachford–Rice equation,
+      which the solver bisects:</p>
+    <p class="eq">Σ<sub>i</sub> z<sub>i</sub>(K<sub>i</sub> − 1) / (1 + β(K<sub>i</sub> − 1)) = 0</p>
+    <p>Two checks come first: if Σ z<sub>i</sub>K<sub>i</sub> ≤ 1 the feed is
+      all liquid (β = 0, its bubble point is above P); if Σ z<sub>i</sub>/K<sub>i</sub> ≤ 1
+      it is all vapour (β = 1). With β known, x<sub>i</sub> = z<sub>i</sub> / (1 + β(K<sub>i</sub> − 1))
+      and y<sub>i</sub> = K<sub>i</sub>x<sub>i</sub>.</p>
+    <p>Default case on the App tab: P<sup>sat</sup> at 25 °C is 9.53 bar for
+      propane and 0.0318 bar for water, so K = 9.53 and 0.0318 at 1 bar —
+      propane overwhelmingly prefers the vapour, water the liquid, and
+      β comes out 0.2278.</p>
+
+    <h2>The stripper</h2>
+    <p>The column is isothermal with constant molar overflow, and only
+      propane is tracked transferring. On every stage the leaving streams
+      are in equilibrium, and a balance on the stage ties them to the
+      streams entering:</p>
+    <p class="eq">y<sub>n</sub> = K·x<sub>n</sub>
+      &nbsp;&nbsp;·&nbsp;&nbsp; L·x<sub>n−1</sub> + G·y<sub>n+1</sub> = L·x<sub>n</sub> + G·y<sub>n</sub></p>
+    <p>The gas enters pure (y<sub>N+1</sub> = 0). The bottom outlet x<sub>N</sub> is the
+      one unknown: the solver guesses it, steps up the column with those
+      two equations, and adjusts the guess until the top liquid it computes
+      equals the flash liquid. On the stepping diagram this is the
+      staircase between the equilibrium line (slope K) and the operating
+      line (slope L/G, through (x<sub>out</sub>, 0) and (x<sub>in</sub>, y<sub>top</sub>)).</p>
+    <p>Everything about how well a stripper can do is in one number, the
+      stripping factor. The Kremser equation then gives the result for
+      pure inlet gas in closed form — the solver uses it only as a check
+      on its own stepping, and warns if the two disagree:</p>
+    <p class="eq">S = K·G / L
+      &nbsp;&nbsp;·&nbsp;&nbsp; x<sub>out</sub>/x<sub>in</sub> = (S − 1) / (S<sup>N+1</sup> − 1)
+      &nbsp;&nbsp; (= 1/(N + 1) when S = 1)</p>
+    <p><strong>Why S ≤ 1 is a wall, not a slope:</strong> if S &lt; 1, then as
+      N → ∞ the fraction remaining tends to (1 − S), not to 0. At S = 0.247
+      (the App tab with the gas cut to 2 mol/h) at least 75.3% of the
+      propane stays in the water no matter how many stages are added —
+      and the computed outlet, 76,814 ppm against an inlet of 101,956 ppm,
+      is 75.3% of it. The fix is never more stages; it is more gas, or a
+      higher K (raise T, lower P).</p>
+
+    <h2>Assumptions and limits</h2>
+    <div class="code-explain">
+      This is a teaching model. Propane and water are nearly immiscible —
+      real propane solubility in water is far below what Raoult's law
+      predicts here, because the activity coefficients are very large.
+      A predictive model needs activity coefficients or an equation of
+      state with a 3-phase flash. Also assumed: one liquid phase (no
+      separate liquid propane — the solver warns near propane's critical
+      temperature, 96.7 °C), an isothermal column, constant L and G,
+      inert gas that does not dissolve, and no water carried into the
+      stripper gas. Antoine constants are NIST fits with limited
+      temperature ranges, and the solver warns outside them.
+    </div>
+
+  </section>
+
+  <!-- ======== TAB: PYTHON ======== -->
+  <section class="tab-panel" id="panel-python" hidden>
+    <p class="placeholder-note">This is solver.py itself — the same file
+      the App tab runs — loaded live and split at its section markers, so
+      the code here can never drift out of date with the code doing the
+      calculations. Each section has its short explanation above the code.
+      If this panel is empty, Python has not finished loading yet.</p>
+    <div id="code-sections"></div>
+  </section>
+
+</main>
+
+<!-- Python in the browser (Pyodide, same version as the reference site),
+     the Plotly chart library, then app.js, which loads solver.py,
+     wires the inputs to it, and draws the charts. -->
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>

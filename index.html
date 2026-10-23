@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Propane + Water: Flash, Then Stripping</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ================================================================
+     SIDEBAR: every user input lives here, in three groups.
+     Input ids match the solver.py argument names on purpose, so the
+     wiring in Step 3 is a straight read-by-id with no renaming.
+     ================================================================ -->
+<aside class="sidebar">
+
+  <div class="side-group">
+    <h2>The feed</h2>
+
+    <label for="feed_flow">Total feed flow [mol/h]</label>
+    <input type="number" id="feed_flow" value="100" min="0" step="any">
+
+    <label for="z_propane">Propane in feed [mole fraction]</label>
+    <input type="number" id="z_propane" value="0.30" min="0" max="1" step="0.01">
+  </div>
+
+  <div class="side-group">
+    <h2>The flash</h2>
+
+    <label for="flash_T_C">Flash temperature [°C]</label>
+    <input type="number" id="flash_T_C" value="25" step="any">
+
+    <label for="flash_P_bar">Flash pressure [bar]</label>
+    <input type="number" id="flash_P_bar" value="1.0" min="0" step="any">
+
+    <label for="model">Equilibrium model</label>
+    <select id="model">
+      <option value="ideal" selected>Ideal — Raoult + Antoine (v1)</option>
+      <option value="nonideal" disabled>Non-ideal / 3-phase — coming later</option>
+    </select>
+  </div>
+
+  <div class="side-group">
+    <h2>The stripper</h2>
+    <p class="side-note">Feed to this column is the flash liquid.
+      It is calculated, never typed in.</p>
+
+    <label for="n_stages">Number of stages N</label>
+    <input type="number" id="n_stages" value="5" min="1" max="30" step="1">
+
+    <label for="gas_flow">Stripping gas in [mol/h]</label>
+    <input type="number" id="gas_flow" value="50" min="0" step="any">
+
+    <label for="stripper_T_C">Column temperature [°C]</label>
+    <input type="number" id="stripper_T_C" value="25" step="any">
+
+    <label for="stripper_P_bar">Column pressure [bar]</label>
+    <input type="number" id="stripper_P_bar" value="1.0" min="0" step="any">
+
+    <label for="spec_ppm">Target: propane in stripped water [ppm]</label>
+    <input type="number" id="spec_ppm" value="10" min="0" step="any">
+  </div>
+
+  <div class="side-footer">
+    <span class="badge" id="py-status">Python: loading…</span>
+    <p class="side-note">Teaching model: Raoult's law flash, then a
+      constant-K stripper checked against Kremser. Propane + water is
+      non-ideal, so treat results as the calculation method,
+      not a design prediction.</p>
+  </div>
+
+</aside>
+
+<!-- ================================================================
+     MAIN COLUMN
+     ================================================================ -->
+<main class="main">
+
+  <h1>Propane + water: flash, then stripping</h1>
+  <p class="intro">A propane + water feed enters a flash vessel. The vapour
+    leaves the top; the liquid leaves the bottom and becomes the feed to a
+    stripping column, where inert gas in at the bottom removes the remaining
+    propane. Change any input in the sidebar and every number below
+    updates.</p>
+
+  <!-- Live flowsheet strip: values are placeholders ("--") until Step 3.
+       The liquid box carries two labels on purpose: it is both the
+       flash outlet and the stripper feed. One stream, not two inputs. -->
+  <section class="flowsheet" aria-label="Flowsheet">
+    <div class="unit">
+      <span class="unit-name">Feed</span>
+      <span class="unit-value" id="stream-feed">-- mol/h</span>
+    </div>
+    <span class="arrow">→</span>
+    <div class="unit vessel">
+      <span class="unit-name">Flash vessel</span>
+      <span class="unit-value">vapour out ↑ · liquid out ↓</span>
+    </div>
+    <span class="arrow">→</span>
+    <div class="unit">
+      <span class="unit-name">Flash vapour</span>
+      <span class="unit-value" id="stream-vapour">-- mol/h</span>
+    </div>
+    <span class="arrow">→</span>
+    <div class="unit highlight">
+      <span class="unit-name">Flash liquid = stripper feed</span>
+      <span class="unit-value" id="stream-liquid">-- mol/h</span>
+    </div>
+    <span class="arrow">→</span>
+    <div class="unit vessel">
+      <span class="unit-name">Stripping column</span>
+      <span class="unit-value">gas in at bottom</span>
+    </div>
+    <span class="arrow">→</span>
+    <div class="unit">
+      <span class="unit-name">Stripped water</span>
+      <span class="unit-value" id="stream-stripped">-- ppm propane</span>
+    </div>
+  </section>
+
+  <!-- The 4 stat cards. Step 3 fills the values by id. -->
+  <section class="cards">
+    <div class="card">
+      <span class="card-label">Vapour fraction β</span>
+      <span class="card-value" id="card-beta">—</span>
+      <span class="card-sub">fraction of feed leaving as flash vapour
+        · <a href="#python" data-goto-tab="python" data-goto-section="3">See the code →</a></span>
+    </div>
+    <div class="card">
+      <span class="card-label">Propane to flash vapour</span>
+      <span class="card-value" id="card-split">—</span>
+      <span class="card-sub">% of feed propane leaving in the flash vapour</span>
+    </div>
+    <div class="card">
+      <span class="card-label">Propane in stripped water</span>
+      <span class="card-value" id="card-ppm">—</span>
+      <span class="card-sub"><span class="pill" id="card-spec-pill">spec: —</span>
+        · <a href="#python" data-goto-tab="python" data-goto-section="5">See the code →</a></span>
+    </div>
+    <div class="card">
+      <span class="card-label">Overall propane removal</span>
+      <span class="card-value" id="card-removal">—</span>
+      <span class="card-sub">feed propane not present in the stripped water, %</span>
+    </div>
+  </section>
+
+  <!-- Solver warnings (S <= 1, Antoine range, near-critical) land here. -->
+  <div class="warnings" id="warnings" hidden></div>
+
+  <!-- Tab bar: App | Theory | Python, as on the reference site. -->
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="app" role="tab">App</button>
+    <button class="tab" data-tab="theory" role="tab">Theory</button>
+    <button class="tab" data-tab="python" role="tab">Python — step by step</button>
+  </nav>
+
+  <!-- ======== TAB: APP ======== -->
+  <section class="tab-panel" id="panel-app">
+
+    <!-- Step-through controls. Disabled placeholders in the skeleton;
+         Step 4 makes them walk the column profile stage by stage. -->
+    <div class="transport">
+      <button class="tbtn" id="btn-reset" disabled title="Back to stage 0">⏮</button>
+      <button class="tbtn" id="btn-back" disabled title="Back one stage">◀ Back</button>
+      <button class="tbtn primary" id="btn-step" disabled>Step stage ▶</button>
+      <button class="tbtn" id="btn-play" disabled>Play</button>
+      <label class="slider-label" for="stage-slider">Stage <span id="stage-now">0</span> of <span id="stage-max">—</span></label>
+      <input type="range" id="stage-slider" min="0" max="5" value="0" disabled>
+    </div>
+    <p class="caption" id="stage-caption">Stage stepping is built in Step 4.</p>
+
+    <h2>Stream summary</h2>
+    <table class="streams">
+      <thead>
+        <tr><th>Stream</th><th>Flow [mol/h]</th><th>x propane</th><th>x water</th></tr>
+      </thead>
+      <tbody>
+        <tr id="row-feed"><td>1 · Feed</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr id="row-vapour"><td>2 · Flash vapour</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr id="row-liquid"><td>3 · Flash liquid → stripper feed</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr id="row-gas-in"><td>4 · Stripping gas in (pure inert)</td><td>—</td><td>0</td><td>0</td></tr>
+        <tr id="row-top-gas"><td>5 · Top gas from stripper</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr id="row-stripped"><td>6 · Stripped water</td><td>—</td><td>—</td><td>—</td></tr>
+        <tr id="row-balance" class="balance-row"><td>Balance check (in − out)</td><td>—</td><td colspan="2">must be ~0</td></tr>
+      </tbody>
+    </table>
+    <p class="caption">Column flows use the model's constant-molar-overflow
+      assumption: liquid and gas molar flows are held constant through the
+      stripper (the standard Kremser assumption). Gas-stream compositions
+      are propane only — the rest of the gas is inert, and water transfer
+      to the gas is neglected in this model.</p>
+
+    <h2>Stage profile</h2>
+    <div class="chart-placeholder" id="chart-stage-profile">
+      Chart placeholder — propane in liquid vs stage number (log scale). Built in Step 4.
+    </div>
+
+    <h2>Stepping diagram</h2>
+    <div class="chart-placeholder" id="chart-stepping">
+      Chart placeholder — equilibrium line and operating line with the stage steps. Built in Step 4.
+    </div>
+
+  </section>
+
+  <!-- ======== TAB: THEORY (content lands in Step 5) ======== -->
+  <section class="tab-panel" id="panel-theory" hidden>
+    <p class="placeholder-note">Theory lands in Step 5: the Rachford–Rice
+      equation for the flash, the stripping factor and Kremser equation
+      for the column, and why propane + water makes this a teaching
+      model rather than a predictive one.</p>
+  </section>
+
+  <!-- ======== TAB: PYTHON (content lands in Step 5) ======== -->
+  <section class="tab-panel" id="panel-python" hidden>
+    <p class="placeholder-note">The code lands in Step 5, loaded live from
+      solver.py so what you read is what is running. Six sections:</p>
+    <ol class="section-outline">
+      <li>Inputs and Antoine constants</li>
+      <li>K-values</li>
+      <li>Rachford–Rice flash</li>
+      <li>Flash streams</li>
+      <li>Stripper stage stepping</li>
+      <li>Kremser check and outputs</li>
+    </ol>
+    <p class="placeholder-note">Each section gets its short explanation
+      above the code, with its inputs → outputs on one line.</p>
+  </section>
+
+</main>
+
+<!-- Python in the browser (Pyodide, same version as the reference site),
+     then app.js, which loads solver.py and wires the inputs to it. -->
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>
